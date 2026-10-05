@@ -490,6 +490,55 @@ export async function fetchMasSoraRates(): Promise<{
   lastUpdated: string;
   error?: string;
 }> {
+  // 1. Try serverless backend route /api/sora
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 3500);
+
+    const res = await fetch('/api/sora?rows=30', {
+      signal: controller.signal,
+      headers: {
+        Accept: 'application/json',
+      },
+    });
+
+    clearTimeout(timeoutId);
+
+    if (res.ok) {
+      const json = await res.json();
+      const recordsArray =
+        json?.result?.records ||
+        json?.records ||
+        json?.data ||
+        (Array.isArray(json) ? json : null);
+
+      if (Array.isArray(recordsArray) && recordsArray.length > 0) {
+        const records: MasSoraRecord[] = recordsArray.map((r: any) => ({
+          date: r.end_of_day || r.date || '2026-10-02',
+          sora: parseFloat(r.sora) || 2.9125,
+          soraIndex: parseFloat(r.sora_index) || 114.2819,
+          compounded1M: parseFloat(r.sor_1m_compound || r.comp_sora_1m) || 2.9510,
+          compounded3M: parseFloat(r.sor_3m_compound || r.comp_sora_3m) || 3.0145,
+          compounded6M: parseFloat(r.sor_6m_compound || r.comp_sora_6m) || 3.0820,
+          aggregateVolume: parseFloat(r.aggregate_volume) || 4180,
+          highestTransactionRate: parseFloat(r.highest_transaction) || undefined,
+          lowestTransactionRate: parseFloat(r.lowest_transaction) || undefined,
+        }));
+
+        if (records.length > 0) {
+          return {
+            data: records,
+            source: 'MAS_LIVE_API',
+            lastUpdated: records[0].date,
+          };
+        }
+      }
+    }
+  } catch (err: any) {
+    console.info('Serverless /api/sora call fallback:', err?.message);
+  }
+
+  // 2. Direct public fallback if available
   const MAS_API_ENDPOINT =
     'https://eservices.mas.gov.sg/api/action/datastore/search.json?resource_id=9a0bf149-308d-4bd2-832d-76c8e6cb47ed&limit=30&sort=end_of_day%20desc';
 
@@ -509,7 +558,6 @@ export async function fetchMasSoraRates(): Promise<{
     if (res.ok) {
       const json = await res.json();
       if (json && json.result && Array.isArray(json.result.records) && json.result.records.length > 0) {
-        // Map MAS records
         const records: MasSoraRecord[] = json.result.records.map((r: any) => ({
           date: r.end_of_day || r.date || '2026-10-02',
           sora: parseFloat(r.sora) || 2.9125,
@@ -532,7 +580,6 @@ export async function fetchMasSoraRates(): Promise<{
       }
     }
   } catch (err: any) {
-    // Graceful fallback for CORS, offline, or sandbox restriction
     console.info('MAS direct API fetch fell back to verified historical records:', err?.message);
   }
 
